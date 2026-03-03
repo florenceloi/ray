@@ -1,6 +1,8 @@
 import os
 import sys
 import tempfile
+import threading
+import time
 
 import pytest
 
@@ -8,6 +10,7 @@ import ray
 from ray import serve
 from ray._common.test_utils import SignalActor, wait_for_condition
 from ray.serve._private.common import GANG_PG_NAME_PREFIX, DeploymentID, ReplicaState
+from ray.serve.context import _get_global_client
 from ray.serve._private.constants import SERVE_DEFAULT_APP_NAME
 from ray.serve._private.test_utils import check_apps_running
 from ray.serve._private.utils import get_all_live_placement_group_names
@@ -1099,6 +1102,73 @@ class TestGangChildSpawnPlacementGroup:
             assert result["child_pg_id"] is None
 
         serve.delete(app_name)
+        serve.shutdown()
+
+
+class TestGangMigration:
+    def test_gang_migration(self, ray_cluster):
+        """Verifies that when a node drains, entire gangs migrate together."""
+        cluster = ray_cluster
+        cluster.add_node(num_cpus=1)
+        node_to_drain = cluster.add_node(num_cpus=1)
+        cluster.wait_for_nodes()
+        ray.init(address=cluster.address)
+        serve.start()
+
+        @serve.deployment(
+            name="D",
+            version="v1",
+            num_replicas=4,
+            ray_actor_options={"num_cpus": 0.25},
+            gang_scheduling_config=GangSchedulingConfig(gang_size=2),
+        )
+        class D:
+            def __call__(self):
+                ctx = ray.serve.context._get_internal_replica_context()
+                gc = ctx.gang_context
+                return {
+                    "pid": os.getpid(),
+                    "gang_id": gc.gang_id if gc else None,
+                    "node_id": ray.get_runtime_context().get_node_id(),
+                }
+
+        handle = serve.run(D.bind(), name="app")
+        wait_for_condition(check_apps_running, apps=["app"])
+
+        gang_ids = set()
+        for _ in range(40):
+            resp = handle.remote().result()
+            if resp["gang_id"] is not None:
+                gang_ids.add(resp["gang_id"])
+        assert len(gang_ids) == 2
+
+        # Add another node for replicas to migrate to, then drain a node
+        cluster.add_node(num_cpus=1)
+        cluster.wait_for_nodes()
+        cluster.remove_node(node_to_drain)
+        wait_for_condition(check_apps_running, apps=["app"], timeout=120)
+
+        deployment = list(serve.status().applications["app"].deployments.values())[0]
+        assert deployment.replica_states.get("RUNNING", 0) == 4
+
+        deployment_id = DeploymentID(name="D", app_name="app")
+        controller = _get_global_client()._controller
+
+        def check_complete_gangs():
+            replicas = ray.get(
+                controller._dump_replica_states_for_testing.remote(deployment_id)
+            )
+            running = replicas.get([ReplicaState.RUNNING])
+            assert len(running) == 4
+            gang_ids = {
+                r.gang_context.gang_id for r in running if r.gang_context is not None
+            }
+            assert len(gang_ids) == 2
+            return True
+
+        wait_for_condition(check_complete_gangs, timeout=60)
+
+        serve.delete("app")
         serve.shutdown()
 
 
