@@ -630,6 +630,11 @@ cdef extern from "ray/gcs_rpc_client/accessor.h" nogil:
             const c_string &serialized_state
         )
 
+        CRayStatus ReportEvents(
+            int64_t timeout_ms,
+            const c_string &serialized_request
+        )
+
         CRayStatus ReportClusterConfig(
             int64_t timeout_ms,
             const c_string &serialized_cluster_config

@@ -777,7 +777,8 @@ void GcsServer::InitGcsAutoscalerStateManager(const GcsInitData &gcs_init_data) 
       raylet_client_pool_,
       kv_manager_->GetInstance(),
       io_context_provider_.GetDefaultIOContext(),
-      gcs_publisher_.get());
+      gcs_publisher_.get(),
+      ray_event_recorder_.get());
   gcs_autoscaler_state_manager_->Initialize(gcs_init_data);
   rpc_server_.RegisterService(
       std::make_unique<rpc::autoscaler::AutoscalerStateGrpcService>(

@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "ray/common/asio/instrumented_io_context.h"
 #include "ray/gcs/actor/gcs_actor_manager.h"
 #include "ray/gcs/gcs_init_data.h"
@@ -30,6 +31,7 @@
 #include "ray/gcs/gcs_placement_group_manager.h"
 #include "ray/gcs/grpc_service_interfaces.h"
 #include "ray/gcs/state_util.h"
+#include "ray/observability/ray_event_recorder_interface.h"
 #include "ray/pubsub/gcs_publisher.h"
 #include "ray/raylet_rpc_client/raylet_client_pool.h"
 #include "ray/util/thread_checker.h"
@@ -38,16 +40,22 @@
 namespace ray {
 namespace gcs {
 
+inline const absl::flat_hash_set<int32_t> kAllowedControlPlaneEventTypes = {};
+
 class GcsAutoscalerStateManager : public rpc::autoscaler::AutoscalerStateServiceHandler {
  public:
-  GcsAutoscalerStateManager(std::string session_name,
-                            GcsNodeManager &gcs_node_manager,
-                            GcsActorManager &gcs_actor_manager,
-                            const GcsPlacementGroupManager &gcs_placement_group_manager,
-                            rpc::RayletClientPool &raylet_client_pool,
-                            InternalKVInterface &kv,
-                            instrumented_io_context &io_context,
-                            pubsub::GcsPublisher *gcs_publisher);
+  GcsAutoscalerStateManager(
+      std::string session_name,
+      GcsNodeManager &gcs_node_manager,
+      GcsActorManager &gcs_actor_manager,
+      const GcsPlacementGroupManager &gcs_placement_group_manager,
+      rpc::RayletClientPool &raylet_client_pool,
+      InternalKVInterface &kv,
+      instrumented_io_context &io_context,
+      pubsub::GcsPublisher *gcs_publisher,
+      observability::RayEventRecorderInterface *ray_event_recorder,
+      const absl::flat_hash_set<int32_t> &allowed_control_plane_event_types =
+          kAllowedControlPlaneEventTypes);
 
   void HandleGetClusterResourceState(
       rpc::autoscaler::GetClusterResourceStateRequest request,
@@ -58,6 +66,10 @@ class GcsAutoscalerStateManager : public rpc::autoscaler::AutoscalerStateService
       rpc::autoscaler::ReportAutoscalingStateRequest request,
       rpc::autoscaler::ReportAutoscalingStateReply *reply,
       rpc::SendReplyCallback send_reply_callback) override;
+
+  void HandleReportEvents(rpc::autoscaler::ReportEventsRequest request,
+                          rpc::autoscaler::ReportEventsReply *reply,
+                          rpc::SendReplyCallback send_reply_callback) override;
 
   void HandleRequestClusterResourceConstraint(
       rpc::autoscaler::RequestClusterResourceConstraintRequest request,
@@ -195,6 +207,12 @@ class GcsAutoscalerStateManager : public rpc::autoscaler::AutoscalerStateService
 
   // A publisher for publishing gcs messages.
   pubsub::GcsPublisher *gcs_publisher_;
+
+  // Recorder used to forward control-plane events to the local aggregator agent.
+  observability::RayEventRecorderInterface *ray_event_recorder_;
+
+  // Allowed event types that can be forwarded through control-plane ingress.
+  absl::flat_hash_set<int32_t> allowed_control_plane_event_types_;
 
   // The default value of the last seen version for the request is 0, which indicates
   // no version has been reported. So the first reported version should be 1.

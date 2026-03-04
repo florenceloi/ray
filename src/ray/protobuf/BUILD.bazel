@@ -455,6 +455,7 @@ proto_library(
     srcs = ["autoscaler.proto"],
     deps = [
         ":common_proto",
+        "//src/ray/protobuf/public:events_base_event_proto",
     ],
 )
 

@@ -305,6 +305,10 @@ class AutoscalerStateServiceHandler {
                                             ReportAutoscalingStateReply *reply,
                                             SendReplyCallback send_reply_callback) = 0;
 
+  virtual void HandleReportEvents(ReportEventsRequest request,
+                                  ReportEventsReply *reply,
+                                  SendReplyCallback send_reply_callback) = 0;
+
   virtual void HandleRequestClusterResourceConstraint(
       RequestClusterResourceConstraintRequest request,
       RequestClusterResourceConstraintReply *reply,

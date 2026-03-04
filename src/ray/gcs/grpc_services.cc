@@ -182,6 +182,7 @@ void AutoscalerStateGrpcService::InitServerCallFactories(
       AutoscalerStateService, GetClusterResourceState, max_active_rpcs_per_handler_)
   RPC_SERVICE_HANDLER(
       AutoscalerStateService, ReportAutoscalingState, max_active_rpcs_per_handler_)
+  RPC_SERVICE_HANDLER(AutoscalerStateService, ReportEvents, max_active_rpcs_per_handler_)
   RPC_SERVICE_HANDLER(
       AutoscalerStateService, ReportClusterConfig, max_active_rpcs_per_handler_)
   RPC_SERVICE_HANDLER(AutoscalerStateService,

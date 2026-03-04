@@ -772,6 +772,8 @@ class AutoscalerStateAccessor {
   virtual Status ReportAutoscalingState(int64_t timeout_ms,
                                         const std::string &serialized_state);
 
+  virtual Status ReportEvents(int64_t timeout_ms, const std::string &serialized_request);
+
   virtual Status ReportClusterConfig(int64_t timeout_ms,
                                      const std::string &serialized_cluster_config);
 

@@ -596,6 +596,22 @@ cdef class InnerGcsClient:
                 .ReportAutoscalingState(timeout_ms, serialzied_state)
             )
 
+    def report_events(
+        self,
+        serialized_request: bytes,
+        timeout_s=None,
+    ):
+        """Report control-plane events to GCS."""
+        cdef:
+            int64_t timeout_ms = round(1000 * timeout_s) if timeout_s else -1
+            c_string payload = serialized_request
+        with nogil:
+            check_status_timeout_as_rpc_error(
+                self.inner.get()
+                .Autoscaler()
+                .ReportEvents(timeout_ms, payload)
+            )
+
     def drain_node(
             self,
             node_id: c_string,

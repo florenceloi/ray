@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "ray/common/protobuf_utils.h"
+#include "ray/observability/ray_event_proto_wrapper.h"
 #include "ray/util/string_utils.h"
 #include "ray/util/time.h"
 
@@ -34,7 +35,9 @@ GcsAutoscalerStateManager::GcsAutoscalerStateManager(
     rpc::RayletClientPool &raylet_client_pool,
     InternalKVInterface &kv,
     instrumented_io_context &io_context,
-    pubsub::GcsPublisher *gcs_publisher)
+    pubsub::GcsPublisher *gcs_publisher,
+    observability::RayEventRecorderInterface *ray_event_recorder,
+    const absl::flat_hash_set<int32_t> &allowed_control_plane_event_types)
     : session_name_(std::move(session_name)),
       gcs_node_manager_(gcs_node_manager),
       gcs_actor_manager_(gcs_actor_manager),
@@ -42,7 +45,9 @@ GcsAutoscalerStateManager::GcsAutoscalerStateManager(
       raylet_client_pool_(raylet_client_pool),
       kv_(kv),
       io_context_(io_context),
-      gcs_publisher_(gcs_publisher) {}
+      gcs_publisher_(gcs_publisher),
+      ray_event_recorder_(ray_event_recorder),
+      allowed_control_plane_event_types_(allowed_control_plane_event_types) {}
 
 void GcsAutoscalerStateManager::HandleGetClusterResourceState(
     rpc::autoscaler::GetClusterResourceStateRequest request,
@@ -129,6 +134,33 @@ void GcsAutoscalerStateManager::HandleReportAutoscalingState(
   }
   autoscaling_state_ = std::move(*request.mutable_autoscaling_state());
   send_reply_callback(ray::Status::OK(), callback, nullptr);
+}
+
+void GcsAutoscalerStateManager::HandleReportEvents(
+    rpc::autoscaler::ReportEventsRequest request,
+    rpc::autoscaler::ReportEventsReply *reply,
+    rpc::SendReplyCallback send_reply_callback) {
+  RAY_CHECK(thread_checker_.IsOnSameThread());
+  (void)reply;
+  RAY_CHECK(ray_event_recorder_ != nullptr);
+
+  std::vector<std::unique_ptr<observability::RayEventInterface>> filtered_events;
+  filtered_events.reserve(request.events_size());
+  for (auto &event : *request.mutable_events()) {
+    if (allowed_control_plane_event_types_.contains(
+            static_cast<int32_t>(event.event_type()))) {
+      filtered_events.push_back(
+          std::make_unique<observability::RayEventProtoWrapper>(std::move(event)));
+    }
+  }
+
+  if (filtered_events.empty()) {
+    send_reply_callback(ray::Status::OK(), nullptr, nullptr);
+    return;
+  }
+
+  ray_event_recorder_->AddEvents(std::move(filtered_events));
+  send_reply_callback(ray::Status::OK(), nullptr, nullptr);
 }
 
 void GcsAutoscalerStateManager::HandleRequestClusterResourceConstraint(

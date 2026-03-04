@@ -383,6 +383,8 @@ ray_cc_library(
         "//src/ray/common:protobuf_utils",
         "//src/ray/common:ray_config",
         "//src/ray/gcs/actor:gcs_actor_manager",
+        "//src/ray/observability:ray_event_proto_wrapper",
+        "//src/ray/observability:ray_event_recorder_interface",
         "//src/ray/protobuf:gcs_cc_proto",
         "//src/ray/pubsub:gcs_publisher",
         "//src/ray/util:logging",

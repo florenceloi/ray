@@ -20,6 +20,7 @@
 #include "ray/common/id.h"
 #include "ray/observability/metrics.h"
 #include "ray/util/logging.h"
+#include "src/ray/protobuf/autoscaler.pb.h"
 
 namespace ray {
 namespace observability {
@@ -104,6 +105,21 @@ std::unique_ptr<RayEventInterface> CreatePythonRayEvent(
       session_name,
       serialized_event_data,
       nested_event_field_number);
+}
+
+std::string SerializeEventsToReportEventsRequest(
+    std::vector<std::unique_ptr<RayEventInterface>> &&events,
+    const std::string &node_id) {
+  rpc::autoscaler::ReportEventsRequest request;
+  auto *request_events = request.mutable_events();
+  request_events->Reserve(events.size());
+  for (auto &event : events) {
+    auto serialized_event = std::move(*event).Serialize();
+    serialized_event.set_node_id(node_id);
+    auto *dst = request_events->Add();
+    dst->Swap(&serialized_event);
+  }
+  return request.SerializeAsString();
 }
 
 PythonEventRecorder::PythonEventRecorder(const std::string &aggregator_address,

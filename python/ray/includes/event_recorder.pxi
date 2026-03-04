@@ -8,6 +8,7 @@ from ray.includes.event_recorder cimport (
     CRayEventInterface,
     CPythonEventRecorder,
     CreatePythonRayEvent,
+    SerializeEventsToReportEventsRequest,
 )
 from ray.includes.common cimport move
 from libcpp.memory cimport unique_ptr
@@ -87,6 +88,25 @@ cdef class RayEvent:
     @property
     def event_type(self):
         return self._event_type
+
+
+def serialize_events_to_report_events_request(
+    list events, bytes node_id_binary
+):
+    """Serialize RayEvent objects into ReportEventsRequest bytes."""
+    cdef c_vector[unique_ptr[CRayEventInterface]] cpp_events
+    cdef RayEvent ev
+    cdef c_string c_node_id = node_id_binary
+    cdef c_string serialized_request
+
+    for ev in events:
+        cpp_events.push_back(move(ev.to_cpp_event()))
+
+    with nogil:
+        serialized_request = SerializeEventsToReportEventsRequest(
+            move(cpp_events), c_node_id
+        )
+    return serialized_request
 
 
 # module-level Singleton instance, lazily created by EventRecorder.initialize().

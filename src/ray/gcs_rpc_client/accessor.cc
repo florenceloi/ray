@@ -1179,6 +1179,18 @@ Status AutoscalerStateAccessor::ReportAutoscalingState(
       std::move(request), &reply, timeout_ms);
 }
 
+Status AutoscalerStateAccessor::ReportEvents(int64_t timeout_ms,
+                                             const std::string &serialized_request) {
+  rpc::autoscaler::ReportEventsRequest request;
+  rpc::autoscaler::ReportEventsReply reply;
+
+  if (!request.ParseFromString(serialized_request)) {
+    return Status::IOError("Failed to parse ReportEventsRequest");
+  }
+  return client_impl_->GetGcsRpcClient().SyncReportEvents(
+      std::move(request), &reply, timeout_ms);
+}
+
 Status AutoscalerStateAccessor::ReportClusterConfig(
     int64_t timeout_ms, const std::string &serialized_cluster_config) {
   rpc::autoscaler::ReportClusterConfigRequest request;

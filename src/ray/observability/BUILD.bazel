@@ -164,6 +164,17 @@ ray_cc_library(
 )
 
 ray_cc_library(
+    name = "ray_event_proto_wrapper",
+    hdrs = [
+        "ray_event_proto_wrapper.h",
+    ],
+    deps = [
+        ":ray_event_interface",
+        "//src/ray/util:logging",
+    ],
+)
+
+ray_cc_library(
     name = "python_event_interface",
     srcs = [
         "python_event_interface.cc",
@@ -179,6 +190,7 @@ ray_cc_library(
         "//src/ray/common:asio",
         "//src/ray/common:grpc_util",
         "//src/ray/common:id",
+        "//src/ray/protobuf:autoscaler_cc_proto",
         "//src/ray/protobuf/public:events_base_event_cc_proto",
         "//src/ray/rpc:event_aggregator_client",
         "//src/ray/util:logging",

@@ -36,6 +36,7 @@
 #include "ray/gcs/gcs_init_data.h"
 #include "ray/gcs/gcs_resource_manager.h"
 #include "ray/gcs/store_client_kv.h"
+#include "ray/observability/fake_ray_event_recorder.h"
 #include "ray/raylet/scheduling/cluster_resource_manager.h"
 #include "ray/raylet_rpc_client/fake_raylet_client.h"
 
@@ -63,6 +64,7 @@ class GcsAutoscalerStateManagerTest : public ::testing::Test {
   std::shared_ptr<MockGcsNodeManager> gcs_node_manager_;
   std::unique_ptr<MockGcsActorManager> gcs_actor_manager_;
   std::unique_ptr<GcsAutoscalerStateManager> gcs_autoscaler_state_manager_;
+  std::unique_ptr<observability::FakeRayEventRecorder> ray_event_recorder_;
   std::shared_ptr<MockGcsPlacementGroupManager> gcs_placement_group_manager_;
   std::unique_ptr<GCSFunctionManager> function_manager_;
   std::unique_ptr<RuntimeEnvManager> runtime_env_manager_;
@@ -114,6 +116,13 @@ class GcsAutoscalerStateManagerTest : public ::testing::Test {
         fake_placement_group_creation_latency_in_ms_histogram_,
         fake_placement_group_scheduling_latency_in_ms_histogram_,
         fake_placement_group_count_gauge_);
+    ray_event_recorder_ = std::make_unique<observability::FakeRayEventRecorder>();
+    ResetAutoscalerStateManager();
+  }
+
+  void ResetAutoscalerStateManager(
+      const absl::flat_hash_set<int32_t> &allowed_event_types =
+          kAllowedControlPlaneEventTypes) {
     gcs_autoscaler_state_manager_.reset(
         new GcsAutoscalerStateManager("fake_cluster",
                                       *gcs_node_manager_,
@@ -122,7 +131,9 @@ class GcsAutoscalerStateManagerTest : public ::testing::Test {
                                       *client_pool_,
                                       kv_manager_->GetInstance(),
                                       io_service_,
-                                      /*gcs_publisher=*/nullptr));
+                                      /*gcs_publisher=*/nullptr,
+                                      ray_event_recorder_.get(),
+                                      allowed_event_types));
   }
 
  public:
@@ -262,6 +273,33 @@ class GcsAutoscalerStateManagerTest : public ::testing::Test {
         [](ray::Status status, std::function<void()> f1, std::function<void()> f2) {};
     gcs_autoscaler_state_manager_->HandleReportAutoscalingState(
         request, &reply, send_reply_callback);
+  }
+
+  Status ReportEvents(rpc::autoscaler::ReportEventsRequest request,
+                      rpc::autoscaler::ReportEventsReply *reply = nullptr) {
+    rpc::autoscaler::ReportEventsReply local_reply;
+    Status status = Status::OK();
+    bool callback_invoked = false;
+    auto send_reply_callback = [&status, &callback_invoked](ray::Status reply_status,
+                                                            std::function<void()> f1,
+                                                            std::function<void()> f2) {
+      status = reply_status;
+      callback_invoked = true;
+    };
+    gcs_autoscaler_state_manager_->HandleReportEvents(
+        std::move(request), reply ? reply : &local_reply, send_reply_callback);
+    EXPECT_TRUE(callback_invoked);
+    return status;
+  }
+
+  std::vector<rpc::events::RayEvent> FlushRecordedEvents() {
+    std::vector<rpc::events::RayEvent> events;
+    auto buffered_events = ray_event_recorder_->FlushBuffer();
+    events.reserve(buffered_events.size());
+    for (auto &event : buffered_events) {
+      events.push_back(std::move(*event).Serialize());
+    }
+    return events;
   }
 
   std::string ShapeToString(const rpc::autoscaler::ResourceRequest &request) {
@@ -1192,6 +1230,115 @@ TEST_F(GcsAutoscalerStateManagerTest,
   ASSERT_EQ(c2.label_values_size(), 1);
   EXPECT_EQ(c2.label_values(0), "TPU");
 }
+
+struct ReportEventsInput {
+  rpc::events::RayEvent::EventType event_type;
+  bool set_source_type = false;
+  rpc::events::RayEvent::SourceType source_type =
+      rpc::events::RayEvent::SOURCE_TYPE_UNSPECIFIED;
+};
+
+struct ReportEventsExpected {
+  rpc::events::RayEvent::EventType event_type;
+  bool check_source_type = false;
+  rpc::events::RayEvent::SourceType source_type =
+      rpc::events::RayEvent::SOURCE_TYPE_UNSPECIFIED;
+};
+
+struct ReportEventsTestCase {
+  std::string name;
+  absl::flat_hash_set<int32_t> allowlist;
+  std::vector<ReportEventsInput> inputs;
+  std::vector<ReportEventsExpected> expected;
+};
+
+class GcsAutoscalerStateManagerReportEventsTest
+    : public GcsAutoscalerStateManagerTest,
+      public ::testing::WithParamInterface<ReportEventsTestCase> {};
+
+TEST_P(GcsAutoscalerStateManagerReportEventsTest, HandleReportEvents) {
+  const auto &param = GetParam();
+  ResetAutoscalerStateManager(param.allowlist);
+
+  rpc::autoscaler::ReportEventsRequest request;
+  for (const auto &input : param.inputs) {
+    auto *event = request.add_events();
+    event->set_event_type(input.event_type);
+    if (input.set_source_type) {
+      event->set_source_type(input.source_type);
+    }
+  }
+
+  rpc::autoscaler::ReportEventsReply reply;
+  const auto status = ReportEvents(std::move(request), &reply);
+  ASSERT_TRUE(status.ok());
+
+  auto recorded_events = FlushRecordedEvents();
+  ASSERT_EQ(recorded_events.size(), param.expected.size());
+  for (size_t i = 0; i < param.expected.size(); ++i) {
+    EXPECT_EQ(recorded_events[i].event_type(), param.expected[i].event_type);
+    if (param.expected[i].check_source_type) {
+      EXPECT_EQ(recorded_events[i].source_type(), param.expected[i].source_type);
+    }
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ControlPlaneIngress,
+    GcsAutoscalerStateManagerReportEventsTest,
+    ::testing::Values(
+        ReportEventsTestCase{
+            "AllowlistOnly",
+            {rpc::events::RayEvent::DRIVER_JOB_LIFECYCLE_EVENT},
+            {
+                ReportEventsInput{rpc::events::RayEvent::DRIVER_JOB_LIFECYCLE_EVENT},
+                ReportEventsInput{rpc::events::RayEvent::TASK_LIFECYCLE_EVENT},
+            },
+            {
+                ReportEventsExpected{rpc::events::RayEvent::DRIVER_JOB_LIFECYCLE_EVENT},
+            },
+        },
+        ReportEventsTestCase{
+            "IgnoreSourceTypeForAdmission",
+            {rpc::events::RayEvent::DRIVER_JOB_LIFECYCLE_EVENT},
+            {
+                ReportEventsInput{rpc::events::RayEvent::DRIVER_JOB_LIFECYCLE_EVENT,
+                                  /*set_source_type=*/true,
+                                  rpc::events::RayEvent::JOBS},
+            },
+            {
+                ReportEventsExpected{rpc::events::RayEvent::DRIVER_JOB_LIFECYCLE_EVENT,
+                                     /*check_source_type=*/true,
+                                     rpc::events::RayEvent::JOBS},
+            },
+        },
+        ReportEventsTestCase{
+            "NoAcceptedEvents",
+            {},
+            {
+                ReportEventsInput{rpc::events::RayEvent::DRIVER_JOB_LIFECYCLE_EVENT},
+            },
+            {},
+        },
+        ReportEventsTestCase{
+            "ForwardAcceptedEvents",
+            {
+                rpc::events::RayEvent::DRIVER_JOB_LIFECYCLE_EVENT,
+                rpc::events::RayEvent::SUBMISSION_JOB_LIFECYCLE_EVENT,
+            },
+            {
+                ReportEventsInput{rpc::events::RayEvent::DRIVER_JOB_LIFECYCLE_EVENT},
+                ReportEventsInput{rpc::events::RayEvent::SUBMISSION_JOB_LIFECYCLE_EVENT},
+            },
+            {
+                ReportEventsExpected{rpc::events::RayEvent::DRIVER_JOB_LIFECYCLE_EVENT},
+                ReportEventsExpected{
+                    rpc::events::RayEvent::SUBMISSION_JOB_LIFECYCLE_EVENT},
+            },
+        }),
+    [](const ::testing::TestParamInfo<ReportEventsTestCase> &info) {
+      return info.param.name;
+    });
 
 }  // namespace gcs
 }  // namespace ray

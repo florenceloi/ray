@@ -17,6 +17,7 @@ syntax = "proto3";
 package ray.rpc.autoscaler;
 
 import "src/ray/protobuf/common.proto";
+import "src/ray/protobuf/public/events_base_event.proto";
 
 // ============= Cluster Resources ====================
 //
@@ -373,11 +374,18 @@ message ReportClusterConfigRequest {
 
 message ReportClusterConfigReply {}
 
+message ReportEventsRequest {
+  repeated events.RayEvent events = 1;
+}
+
+message ReportEventsReply {}
+
 service AutoscalerStateService {
   rpc GetClusterResourceState(GetClusterResourceStateRequest)
       returns (GetClusterResourceStateReply);
   rpc ReportAutoscalingState(ReportAutoscalingStateRequest)
       returns (ReportAutoscalingStateReply);
+  rpc ReportEvents(ReportEventsRequest) returns (ReportEventsReply);
   rpc ReportClusterConfig(ReportClusterConfigRequest) returns (ReportClusterConfigReply);
   // Request additional cluster resources constraints. This is the RPC call made
   // when users call ray.autoscaler.sdk.request_resources.

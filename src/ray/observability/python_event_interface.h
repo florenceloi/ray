@@ -100,6 +100,13 @@ std::unique_ptr<RayEventInterface> CreatePythonRayEvent(
     const std::string &serialized_event_data,
     int nested_event_field_number);
 
+/// Serialize Python-emitted events into a ReportEventsRequest payload.
+///
+/// Each event is serialized through RayEventInterface::Serialize, node_id is applied,
+/// and the resulting ReportEventsRequest is serialized to bytes.
+std::string SerializeEventsToReportEventsRequest(
+    std::vector<std::unique_ptr<RayEventInterface>> &&events, const std::string &node_id);
+
 /// Owns all infrastructure for the Python-side event recorder: io_context,
 /// background thread, gRPC client, metrics counter, and the recorder itself.
 ///
