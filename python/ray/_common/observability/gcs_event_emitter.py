@@ -6,6 +6,9 @@ from ray._raylet import (
     serialize_events_to_report_events_request,
 )
 
+# Default timeout for GCS event reporting RPCs (seconds).
+_DEFAULT_TIMEOUT_S = 10
+
 
 class GcsEventEmitter:
     """Per-process singleton for direct GCS event emission."""
@@ -13,22 +16,19 @@ class GcsEventEmitter:
     _singleton_lock = threading.RLock()
     _instance: Optional["GcsEventEmitter"] = None
 
-    def __new__(cls, gcs_client, node_id_hex: str, timeout_s=None):
+    def __new__(cls, *args, **kwargs):
         with cls._singleton_lock:
             if cls._instance is None:
                 cls._instance = super().__new__(cls)
             return cls._instance
 
-    def __init__(self, gcs_client, node_id_hex: str, timeout_s=None):
-        node_id_binary = bytes.fromhex(node_id_hex)
+    def __init__(self, gcs_client, node_id_hex: str, timeout_s=_DEFAULT_TIMEOUT_S):
         with type(self)._singleton_lock:
             if getattr(self, "_initialized", False):
-                # already initialized, do nothing
                 return
 
-            # initialize the instance
             self._gcs_client = gcs_client
-            self._node_id_binary = node_id_binary
+            self._node_id_binary = bytes.fromhex(node_id_hex)
             self._timeout_s = timeout_s
             self._send_lock = threading.Lock()
             self._initialized = True

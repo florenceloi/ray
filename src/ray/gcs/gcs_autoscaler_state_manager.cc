@@ -142,7 +142,12 @@ void GcsAutoscalerStateManager::HandleReportEvents(
     rpc::SendReplyCallback send_reply_callback) {
   RAY_CHECK(thread_checker_.IsOnSameThread());
   (void)reply;
-  RAY_CHECK(ray_event_recorder_ != nullptr);
+
+  if (ray_event_recorder_ == nullptr) {
+    send_reply_callback(
+        ray::Status::Invalid("Event recorder not initialized"), nullptr, nullptr);
+    return;
+  }
 
   std::vector<std::unique_ptr<observability::RayEventInterface>> filtered_events;
   filtered_events.reserve(request.events_size());
